@@ -5,12 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-
-// Types from the project spec
-type SalesTone = 'professional' | 'consultative' | 'dynamic' | 'friendly';
+import { SalesTone } from '@/types/types';
 
 interface Prospect {
-  id: string;
+  jobId: string;
   createdAt: string;
   summary: string;
   tone: SalesTone;
@@ -40,29 +38,84 @@ const SalesMessageForm = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+  
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary, tone })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        toast({
+          title: 'Error',
+          description: error.message || 'Failed to generate message'
+        });
+        return;
+      }
 
-    const newProspect: Prospect = {
-      //set id based on response from backend after sending request
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      summary,
-      tone,
-      status: 'pending'
-    };
+      const { jobId } = await response.json();
 
-    // Add to history
-    setHistory(prev => {
-      const updated = [newProspect, ...prev].slice(0, 50); // Keep max 50 entries
-      return updated;
-    });
-
-    // Clear form
-    setSummary('');
+      const newProspect: Prospect = {
+        jobId: jobId,
+        createdAt: new Date().toISOString(),
+        summary,
+        tone,
+        status: 'pending'
+      };
     
-    toast({
-      title: "Request submitted",
-      description: "Your sales message is being generated.",
-    });
+      setHistory(prev => [newProspect, ...prev].slice(0, 50));
+      setSummary('');
+
+      pollJobStatus(jobId);
+      toast({
+        title: 'Message generation started',
+        description: `Your personalized message is being generated.`,
+      });
+
+    } catch (error) {
+      console.error('Error generating sales message:', error);
+      toast({
+        title: 'Error',
+        description: 'Something went wrong while generating your message. Please try again.'
+      });
+    }
+  };
+  
+  const pollJobStatus = async (jobId: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/messages/${jobId}`);
+        const data = await response.json();
+        
+        if (data.state === 'completed') {
+          updateProspectStatus(jobId, 'completed', data.result.message);
+          clearInterval(interval);
+        } else if (data.state === 'failed') {
+          updateProspectStatus(jobId, 'failed', undefined, 'Generation failed');
+          clearInterval(interval);
+        }
+      } catch (error) {
+        clearInterval(interval);
+        updateProspectStatus(jobId, 'failed', undefined, (error as Error).message);
+      }
+    }, 2000);
+  };
+  
+  const updateProspectStatus = (
+    jobId: string, 
+    status: Prospect['status'], 
+    message?: string, 
+    error?: string
+  ) => {
+    setHistory(prev => 
+      prev.map(p => 
+        p.jobId === jobId 
+          ? { ...p, status, generatedMessage: message, error }
+          : p
+      )
+    );
   };
 
   return (
@@ -114,7 +167,7 @@ const SalesMessageForm = () => {
           <div className="space-y-4">
             {history.map((prospect) => (
               <div
-                key={prospect.id}
+                key={prospect.jobId}
                 className="p-4 border rounded-lg space-y-2"
               >
                 <div className="flex justify-between items-start">
