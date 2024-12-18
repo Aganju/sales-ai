@@ -21,6 +21,8 @@ const SalesMessageForm = () => {
   const [summary, setSummary] = useState('');
   const [tone, setTone] = useState<SalesTone>('professional');
   const [history, setHistory] = useState<Prospect[]>([]);
+  const [currentGeneration, setCurrentGeneration] = useState<Prospect | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const { toast } = useToast();
 
   // Load history from localStorage on component mount
@@ -65,10 +67,10 @@ const SalesMessageForm = () => {
         status: 'pending'
       };
     
-      setHistory(prev => [newProspect, ...prev].slice(0, 50));
+      setCurrentGeneration(newProspect);
       setSummary('');
 
-      pollJobStatus(jobId);
+      pollJobStatus(jobId, newProspect);
       toast({
         title: 'Message generation started',
         description: `Your personalized message is being generated.`,
@@ -83,39 +85,33 @@ const SalesMessageForm = () => {
     }
   };
   
-  const pollJobStatus = async (jobId: string) => {
+  const pollJobStatus = async (jobId: string, prospect: Prospect) => {
     const interval = setInterval(async () => {
       try {
         const response = await fetch(`/api/messages/${jobId}`);
         const data = await response.json();
-        
+        const updatedProspect = prospect;
+
         if (data.state === 'completed') {
-          updateProspectStatus(jobId, 'completed', data.result.message);
-          clearInterval(interval);
+          updatedProspect.status = 'completed';
+          updatedProspect.generatedMessage = data.message;
+          setHistory(prev => [updatedProspect, ...prev].slice(0, 50));
+
         } else if (data.state === 'failed') {
-          updateProspectStatus(jobId, 'failed', undefined, 'Generation failed');
-          clearInterval(interval);
+          updatedProspect.status = 'failed';
+          updatedProspect.error = 'Generation failed';
+          setHistory(prev => [updatedProspect, ...prev].slice(0, 50));
         }
-      } catch (error) {
+
+        setCurrentGeneration(updatedProspect);
         clearInterval(interval);
-        updateProspectStatus(jobId, 'failed', undefined, (error as Error).message);
+      } catch (error) {
+        const updatedProspect: Prospect = { ...prospect, status: 'failed', error: (error as Error).message };
+        setHistory(prev => [updatedProspect, ...prev].slice(0, 50));
+        setCurrentGeneration(updatedProspect);
+        clearInterval(interval);
       }
     }, 2000);
-  };
-  
-  const updateProspectStatus = (
-    jobId: string, 
-    status: Prospect['status'], 
-    message?: string, 
-    error?: string
-  ) => {
-    setHistory(prev => 
-      prev.map(p => 
-        p.jobId === jobId 
-          ? { ...p, status, generatedMessage: message, error }
-          : p
-      )
-    );
   };
 
   return (
@@ -152,50 +148,109 @@ const SalesMessageForm = () => {
               </Select>
             </div>
 
-            <Button type="submit" className="w-full">
-              Generate Message
+            <Button type="submit" className="w-full" disabled={currentGeneration?.status === 'pending'}>
+              {currentGeneration?.status === 'pending' ? (
+                <>
+                  <span className="animate-spin mr-2">⭮</span>
+                  Generating...
+                </>
+              ) : (
+                'Generate Message'
+              )}
             </Button>
           </form>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>History</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {history.map((prospect) => (
-              <div
-                key={prospect.jobId}
-                className="p-4 border rounded-lg space-y-2"
-              >
-                <div className="flex justify-between items-start">
-                  <div className="font-medium">{new Date(prospect.createdAt).toLocaleString()}</div>
-                  <div className="text-sm">
-                    Status: {prospect.status}
-                  </div>
+      {currentGeneration && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Prospect Message</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="p-4 border rounded-lg space-y-2">
+              <div className="flex justify-between items-start">
+                <div className="font-medium">{new Date(currentGeneration.createdAt).toLocaleString()}</div>
+                <div className="text-sm flex items-center gap-2">
+                  {currentGeneration.status === 'pending' && (
+                    <span className="animate-spin">⭮</span>
+                  )}
+                  Status: {currentGeneration.status}
                 </div>
-                <div className="text-sm text-gray-600">
-                  Tone: {prospect.tone}
-                </div>
-                <div className="text-sm">
-                  {prospect.summary}
-                </div>
-                {prospect.generatedMessage && (
-                  <div className="text-sm mt-2 p-2 bg-gray-50 rounded">
-                    {prospect.generatedMessage}
-                  </div>
-                )}
-                {prospect.error && (
-                  <div className="text-sm text-red-600">
-                    Error: {prospect.error}
-                  </div>
-                )}
               </div>
-            ))}
-          </div>
-        </CardContent>
+              <div className="text-sm text-gray-600">
+                Tone: {currentGeneration.tone}
+              </div>
+              <div className="text-sm">
+                {currentGeneration.summary}
+              </div>
+              {currentGeneration.generatedMessage && (
+                <div className="text-sm mt-2 p-2 bg-gray-50 rounded">
+                  {currentGeneration.generatedMessage}
+                </div>
+              )}
+              {currentGeneration.error && (
+                <div className="text-sm text-red-600">
+                  Error: {currentGeneration.error}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>History</CardTitle>
+          <Button 
+            variant="ghost" 
+            onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+            className="text-sm"
+          >
+            {isHistoryOpen ? 'Hide' : 'Show'} History
+          </Button>
+        </CardHeader>
+        {isHistoryOpen && (
+          <CardContent>
+            <div className="space-y-4">
+              {history.map((prospect) => (
+                <div
+                  key={prospect.jobId}
+                  className="p-4 border rounded-lg space-y-2"
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="font-medium">{new Date(prospect.createdAt).toLocaleString()}</div>
+                    <div className="text-sm flex items-center gap-2">
+                      {prospect.status === 'pending' && (
+                        <span className="animate-spin">
+                          <svg className="h-5 w-5 mr-3 ..." viewBox="0 0 24 24">
+                          </svg>
+                        </span>
+                      )}
+                      Status: {prospect.status}
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    Tone: {prospect.tone}
+                  </div>
+                  <div className="text-sm">
+                    {prospect.summary}
+                  </div>
+                  {prospect.generatedMessage && (
+                    <div className="text-sm mt-2 p-2 bg-gray-50 rounded">
+                      {prospect.generatedMessage}
+                    </div>
+                  )}
+                  {prospect.error && (
+                    <div className="text-sm text-red-600">
+                      Error: {prospect.error}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        )}
       </Card>
     </div>
   );

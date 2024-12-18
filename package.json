@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.33.1",
     "@bull-board/api": "^6.5.3",
     "@bull-board/hono": "^6.5.3",
     "@hono/node-server": "^1.13.7",
